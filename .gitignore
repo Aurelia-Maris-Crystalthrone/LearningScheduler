@@ -1,0 +1,40 @@
+# Python 虚拟环境（重点！千万别传！）
+.venv/
+infinitrain.venv/
+venv/
+ENV/
+
+# Python 缓存和编译文件
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 编译产物 / C++构建目录
+build/
+demo/build/
+CMakeFiles/
+CMakeCache.txt
+
+# IDE 设置
+.vscode/
+.idea/
+*.swp
+
+# 乱七八糟的日志和临时文件
+*.log
+.DS_Store
