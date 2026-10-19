@@ -12,6 +12,14 @@ endif()
 # 添加可执行文件
 add_executable(lr_scheduler_demo examples/main.cc)
 
+# 参考序列生成器：demo/align.py 用它产出 C++ 侧的学习率序列做三方对齐
+add_executable(reference_cpp reference_cpp.cpp)
+target_include_directories(reference_cpp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(reference_cpp PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
 # 包含头文件目录
 target_include_directories(lr_scheduler_demo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

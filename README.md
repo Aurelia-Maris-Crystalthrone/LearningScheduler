@@ -1,251 +1,305 @@
-# LearingScheduler
+# LearningScheduler
 
-> **InfiniTrain 学习率调度器模块** — 一个独立、可扩展、支持状态恢复的学习率调度器，与 PyTorch `torch.optim.lr_scheduler` 数值对齐。
+> **学习率调度器模块** — 一套同时提供 C++ 与 Python 实现的学习率调度器，支持组合调度与状态恢复，并提供可执行的数值对齐验证。
 
-## 🔗 项目来源
+**项目地址**：<https://github.com/Aurelia-Maris-Crystalthrone/LearningScheduler>
 
-本项目 fork 自 **[InfiniTensor/TinyInfiniTensor](https://github.com/InfiniTensor/TinyInfiniTensor)**。
-
-TinyInfiniTensor 是 InfiniTensor 组织下的一个简化版 AI 编译器学习项目，旨在帮助初学者快速上手，保留了计算图和 kernel 层的核心概念，能够基于 C++ 搭建计算图进行推理计算，目前支持 CPU 平台。InfiniTensor 社区由启元实验室发起，聚焦人工智能编译器、大模型训练与推理优化、异构算力适配等核心领域。
-
-本 fork 在原项目基础上，添加了完整的**学习率调度器模块**，作为 InfiniTrain 训练框架的组件实现与验证。InfiniTrain 是一个从零实现的 C++ 大规模模型训练框架，支持多维度分布式并行（DDP、TP、SP、PP 等），适配 GPT-2、LLaMA 3 等主流模型。
+---
 
 ## 📖 项目简介
 
-LearingScheduler 为 InfiniTrain 训练框架提供了一套完整的学习率调度器实现。该模块遵循单一职责、最小耦合和易于扩展的设计原则，支持 C++ 和 Python 两种实现，可满足从核心训练到快速验证的多种场景。
+本仓库实现了一组常用学习率调度策略，用于验证同一套调度逻辑在 **C++ 训练框架**与 **Python/PyTorch 参考实现**之间能否给出完全一致的学习率曲线。
+
+同一个库提供两份等价实现：
+
+| 模块 | 语言 | 用途 |
+| :--- | :--- | :--- |
+| `demo/lr_scheduler.h` | C++17 | 头文件即用，面向 C++ 训练框架集成 |
+| `infinitrain/lr_scheduler.py` | Python | 便于快速实验与和 PyTorch 对比 |
+
+「两套实现行为一致」这一结论由 `demo/align.py` **自动编译并运行 C++ 代码后逐步断言**，而非人工声称。
+
+---
+
+## 🔗 项目来源
+
+本项目的 C++ 调度器实现（`demo/`）是在 [TinyInfiniTensor](https://github.com/InfiniTensor/TinyInfiniTensor) 的调度器练习题目基础上完成的；Python 实现与训练脚本（`infinitrain/`）为本仓库补充。
+
+> **⚠️ 需要澄清的一点**：本仓库**并非 GitHub 意义上的 fork**——GitHub API 对该仓库返回
+> `fork: false`、`parent: null`，仓库中也不包含 TinyInfiniTensor 的原始代码或上游提交历史。
+> 上文指的是「参考了其题目与课程要求」，而非代码层面的派生。
+
+---
 
 ## 📂 仓库结构
 
 ```
-LearingScheduler/
-├── demo/                      # C++ 核心调度器实现
-│   ├── examples/              # 使用示例
-│   │   └── main.cc            # 示例主程序
-│   ├── align.py               # PyTorch 数值对齐验证脚本
-│   ├── lr_scheduler.h         # 调度器头文件
-│   ├── CMakeLists.txt         # CMake 构建配置
-│   ├── LICENSE                # 许可证
-│   └── README.md              # demo 模块说明
-├── infinitrain/               # Python 模拟训练框架（调度器测例专用）
-│   ├── lr_scheduler.py        # Python 调度器实现
-│   ├── train.py               # 训练脚本
-│   ├── requirements.txt       # Python 依赖
-│   ├── get-pip.py             # pip 安装脚本
-│   └── README.md              # infinitrain 模块说明
+LearningScheduler/
+├── LICENSE                     # 根目录许可证（MIT）
+├── README.md
 ├── .gitignore
-├── venv_backup.tar.gz         # 虚拟环境备份
-└── README.md
+├── demo/                       # C++ 实现与验证
+│   ├── lr_scheduler.h          # 调度器头文件（核心）
+│   ├── reference_cpp.cpp       # 参考序列生成器，输出学习率序列 JSON
+│   ├── align.py                # ⭐ 三方数值对齐验证（C++ / Python / PyTorch）
+│   ├── CMakeLists.txt          # CMake 构建配置
+│   ├── LICENSE                 # demo 模块许可证（MIT, InfiniTensor）
+│   ├── README.md               # demo 模块说明
+│   └── examples/
+│       └── main.cc             # 命令行示例
+└── infinitrain/                # Python 实现与模拟训练脚本
+    ├── lr_scheduler.py         # Python 调度器实现（核心）
+    ├── train.py                # 模拟训练脚本（支持单机与 DDP）
+    ├── requirements.txt        # Python 依赖
+    └── README.md
 ```
-
-## ✨ 核心特性
-
-- **PyTorch 数值对齐**：所有调度器的数值行为与 PyTorch 对应类完全一致
-- **状态可恢复**：所有调度器实现 `State()` / `LoadState()` 接口，支持检查点保存与训练恢复
-- **易于扩展**：继承 `LRScheduler` 并实现 `ComputeLR()` 即可添加新策略
-- **组合支持**：通过 `SequentialLR` 和 `ChainedScheduler` 构建复杂的调度流水线
-- **零侵入设计**：仅通过优化器的公开 `SetLearningRate()` API 进行交互
-
-## 🛠️ 环境要求
-
-### demo 模块（C++）
-
-| 依赖项 | 版本要求 | 说明 |
-|---|---|---|
-| C++ 编译器 | GCC >= 7 或 MSVC 2019/2022 | 需支持 C++17 |
-| CMake | >= 3.15 | 推荐 3.27+ |
-| gflags | 最新版 | Google 命令行参数解析库 |
-
-> **注意**：InfiniTrain 官方推荐 gcc/g++ 13+、CMake 3.13+。本 demo 模块的最低要求略低，但建议使用较新版本以获得最佳兼容性。
-
-### infinitrain 模块（Python）
-
-| 依赖项 | 版本要求 |
-|---|---|
-| Python | >= 3.10 |
-| PyTorch | >= 1.10（支持 CUDA） |
-| transformers | 最新版 |
-| numpy | 最新版 |
-
-## 🚀 快速开始
-
-### 前置检查
-
-```bash
-# 检查编译器
-g++ --version          # 应 >= 7
-
-# 检查 CMake
-cmake --version        # 应 >= 3.15
-
-# 检查 Python
-python3 --version      # 应 >= 3.10
-```
-
-### C++ 调度器模块
-
-#### 1. 安装依赖
-
-**Linux（有 sudo 权限）**：
-```bash
-sudo apt update
-sudo apt install -y cmake g++ libgflags-dev
-```
-
-**Linux（受限环境 / 无 sudo 权限）**：
-
-如果系统提示 `sudo: The "no new privileges" flag is set`，说明你处于 Docker/Podman/distrobox/devcontainer 等容器环境中，`sudo` 无法提权。此时可将 CMake 和 gflags 安装到用户目录：
-
-**安装 CMake**：
-```bash
-cd ~
-wget https://github.com/Kitware/CMake/releases/download/v3.27.8/cmake-3.27.8-linux-x86_64.tar.gz
-tar -xzf cmake-3.27.8-linux-x86_64.tar.gz
-export PATH="$HOME/cmake-3.27.8-linux-x86_64/bin:$PATH"
-
-# 永久生效（追加到 ~/.bashrc）
-echo 'export PATH="$HOME/cmake-3.27.8-linux-x86_64/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-
-cmake --version  # 验证安装
-```
-
-**安装 gflags**：
-```bash
-cd ~
-git clone https://github.com/gflags/gflags.git
-cd gflags
-mkdir -p build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=$HOME/.local ..
-make -j$(nproc)
-make install
-
-# 将 gflags 库路径加入环境变量
-echo 'export CMAKE_PREFIX_PATH=$HOME/.local:$CMAKE_PREFIX_PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=$HOME/.local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc
-```
-
-**Windows（使用 vcpkg）**：
-```bash
-git clone https://github.com/Microsoft/vcpkg.git
-cd vcpkg
-.\bootstrap-vcpkg.bat
-.\vcpkg integrate install
-.\vcpkg install gflags:x64-windows
-```
-
-#### 2. 构建项目
-
-```bash
-cd demo
-mkdir -p build && cd build
-
-# 标准构建
-cmake ..
-
-# 如果 gflags 安装在 $HOME/.local（受限环境），需指定路径：
-# cmake -DCMAKE_PREFIX_PATH=$HOME/.local ..
-
-cmake --build . --config Release -j$(nproc)
-```
-
-> **常见问题**：如果之前构建失败过，CMake 会缓存错误配置。建议先清理缓存再重新构建：
-> ```bash
-> rm -rf build && mkdir build && cd build
-> cmake -DCMAKE_PREFIX_PATH=$HOME/.local ..
-> make -j$(nproc)
-> ```
-
-### Python 模拟训练模块
-
-```bash
-cd infinitrain
-
-# 创建虚拟环境（推荐，避免 PEP 668 externally-managed-environment 错误）
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 升级 pip 并安装依赖
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-
-> **常见问题**：如果在虚拟环境中仍然遇到 `externally-managed-environment` 错误，可能是因为 `pip` 仍指向系统版本。可用以下命令验证和解决：
-> ```bash
-> which pip    # 应输出 .venv/bin/pip，而非 /usr/bin/pip
-> ./.venv/bin/python3 -m pip install -r requirements.txt
-> ```
-> 若虚拟环境创建失败（缺少 `python3-venv` 组件且无 sudo 权限），可尝试：
-> ```bash
-> python3 -m venv --without-pip .venv
-> ```
-
-运行训练脚本进行验证：
-
-```bash
-python train.py
-```
-
-## 📝 使用说明
-
-### 扩展自定义调度器（C++）
-
-继承 `LRScheduler` 基类并实现 `ComputeLR()` 方法即可定义新的学习率策略：
-
-```cpp
-class MyScheduler : public LRScheduler {
- public:
-  float ComputeLR(int step) override {
-    // 自定义学习率计算逻辑
-    return base_lr_ * std::pow(decay_rate_, step / decay_steps_);
-  }
-};
-```
-
-### 状态保存与恢复
-
-所有调度器均支持检查点功能：
-
-```cpp
-// 保存状态
-auto state = scheduler->State();
-SaveToCheckpoint(state, "checkpoint.bin");
-
-// 恢复状态
-auto state = LoadFromCheckpoint("checkpoint.bin");
-scheduler->LoadState(state);
-```
-
-### PyTorch 数值对齐验证
-
-`demo/align.py` 提供了与 PyTorch 调度器的数值对比脚本，可用于验证 C++ 实现的正确性。使用前请确保已安装 PyTorch：
-
-```bash
-pip install torch numpy
-python demo/align.py
-```
-
-## 🧪 构建验证清单
-
-完成构建后，可按以下步骤确认环境配置正确：
-
-- [ ] `cmake --version` 输出 ≥ 3.15
-- [ ] `g++ --version` 输出 ≥ 7
-- [ ] gflags 已安装（`ls $HOME/.local/lib/libgflags*` 或 `dpkg -l libgflags-dev`）
-- [ ] `cd demo/build && cmake -DCMAKE_PREFIX_PATH=$HOME/.local ..` 无报错，输出 `-- Configuring done` 和 `-- Generating done`
-- [ ] `make -j$(nproc)` 成功生成可执行文件
-- [ ] `python3 -c "import torch; print(torch.__version__)"` 正常输出
-
-## 📄 许可证
-
-本项目 demo 模块采用 MIT 许可证，详见 [demo/LICENSE](demo/LICENSE)。
-
-## 🙏 致谢
-
-- 原始项目：[InfiniTensor/TinyInfiniTensor](https://github.com/InfiniTensor/TinyInfiniTensor)
-- 训练框架参考：[InfiniTensor/InfiniTrain](https://github.com/InfiniTensor/InfiniTrain)
-- InfiniTensor 社区：由启元实验室与清华大学等机构支持
 
 ---
 
-**项目地址**：https://github.com/Aurelia-Maris-Crystalthrone/LearingScheduler
+## ✨ 调度器一览
+
+| 类 | 公式 | 说明 |
+| :--- | :--- | :--- |
+| `ConstantLR` | `lr = const` | 常数学习率 |
+| `StepLR` | `lr = lr₀ · γ^(⌊step/step_size⌋)` | 等间隔衰减 |
+| `LinearLR` | `lr = start + min(step/warmup, 1)·(end-start)` | 线性 warmup（**加性**，可从 0 起） |
+| `LambdaLR` | `lr = lr₀ · f(step)` | 自定义函数 |
+| `SequentialLR` | 按里程碑切换子调度器 | 子调度器独立计数 |
+| `ChainedScheduler` | 依次 `step()` 所有子调度器 | 见下方差异说明 |
+
+约定：`step_count` 从 0 开始，**第一次调用 `step()` 后变为 1**，对应 PyTorch 的 `last_epoch`。
+
+### 设计模式与接口
+
+- **状态可恢复**：所有调度器实现 `State()` / `LoadState()`，支持 checkpoint/resume
+- **零侵入**：仅通过优化器的 `SetLearningRate()` 公开接口交互
+- **易扩展**：继承 `LRScheduler` 并实现 `ComputeLR()` 即可
+- **错误处理统一**：`StateDict` 缺失键时保持当前值，不会一处静默、一处抛异常
+
+---
+
+## 🎯 数值对齐验证
+
+这是本仓库的核心。运行：
+
+```bash
+python demo/align.py          # 打印对比表格
+pytest demo/align.py -v       # 作为测试套件运行
+```
+
+`align.py` 会：
+
+1. 自动编译并运行 `reference_cpp.cpp`，拿到 C++ 侧的学习率序列（**单一数据源**）；
+2. 用相同参数驱动 `infinitrain/lr_scheduler.py`；
+3. 用相同参数驱动 `torch.optim.lr_scheduler`；
+4. 逐步断言三者一致。
+
+实测输出（12 步，Python 3.12.7 + PyTorch 2.14.1 + MinGW g++）：
+
+```
+case                      C++ vs Python        Python vs PyTorch
+------------------------------------------------------------------
+constant_lr               ✅ 一致                ✅ 一致
+step_lr                   ✅ 一致                ✅ 一致
+step_lr_size1             ✅ 一致                ✅ 一致
+linear_lr_warmup          ✅ 一致                ✅ 一致
+linear_lr_nonzero_start   ✅ 一致                ✅ 一致
+lambda_lr_stepwise        ✅ 一致                ✅ 一致
+lambda_lr_reciprocal      ✅ 一致                ✅ 一致
+sequential_warmup_step    ✅ 一致                ✅ 一致
+sequential_three_stage    ✅ 一致                ✅ 一致
+chained_warmup_step       ✅ 一致                不适用（语义差异）
+```
+
+若环境缺少 C++ 编译器或 PyTorch，相应用例会自动跳过并说明原因，不会静默伪装成通过。
+
+### ⚠️ 与 PyTorch 的两处已知差异
+
+这两处**不做伪装对齐**，此处明确记录：
+
+**1. `LinearLR` 是加性线性 warmup，不是 PyTorch 的 `LinearLR`**
+
+| | 本项目 `LinearLR` | PyTorch `LinearLR` |
+| :--- | :--- | :--- |
+| 语义 | 加性插值：`start + α·(end-start)` | 乘性因子：`lr × 递推因子` |
+| 能否从 0 开始 | ✅ 可以 | ❌ 不可以，要求 `start_factor > 0` |
+
+本实现的等价 PyTorch 表达是 `LambdaLR(lambda t: start/end + min(t/warmup, 1)·(1 - start/end))`，
+`align.py` 中对该等价性有专门的测试用例。
+
+**2. `ChainedScheduler` 语义不同**
+
+- 本项目：每个子调度器按闭式公式计算**绝对 lr** 并写回 optimizer，最终值由**最后一个**决定。
+- PyTorch：子调度器相对 optimizer 当前 lr **依次递推**（典型实现为 `return [group["lr"] for group in ...]`），效果是依次相乘。
+
+两者不可互换。需要 PyTorch 语义时请直接使用 `torch.optim.lr_scheduler.ChainedScheduler`。
+
+### 精度容差说明
+
+- **Python vs PyTorch**：双精度计算，`rtol = 1e-9`
+- **C++ vs Python**：C++ 侧内部为 `float`（有效位约 7 位十进制），`rtol = 1e-6`
+
+后者是语言层面的存储精度差异，不是实现 bug。若需要更高精度，可把 `lr_scheduler.h` 中的
+`float` 改为 `double`。
+
+---
+
+## 🛠️ 环境要求
+
+### C++ 模块
+
+| 依赖 | 要求 |
+| :--- | :--- |
+| C++ 编译器 | GCC ≥ 7 / Clang ≥ 5 / MSVC 2019+，需支持 **C++17** |
+| CMake | ≥ 3.15（推荐 3.27+） |
+| gflags | 仅构建 `examples/main.cc` 需要；`reference_cpp.cpp` 无此依赖 |
+
+### Python 模块
+
+| 依赖 | 要求 |
+| :--- | :--- |
+| Python | ≥ 3.10 |
+| PyTorch | ≥ 2.0（对齐基线为 2.14.1） |
+| transformers | ≥ 4.30（仅 `train.py` 构造 tiny 模型时使用） |
+| numpy | ≥ 1.24 |
+| pytest | ≥ 7.0（运行 `align.py` 测试套件） |
+
+---
+
+## 🚀 快速开始
+
+### 1. 数值对齐验证（推荐先做）
+
+需要 C++ 编译器和 PyTorch：
+
+```bash
+python demo/align.py
+```
+
+### 2. C++ 模块
+
+```bash
+# Linux
+sudo apt install -y cmake g++ libgflags-dev
+
+cd demo
+mkdir -p build && cd build
+cmake ..
+cmake --build . --config Release -j$(nproc)
+```
+
+运行示例：
+
+```bash
+./lr_scheduler_demo --lr_scheduler=sequential \
+                    --scheduler_list=linear,steplr \
+                    --scheduler_milestones=5 \
+                    --warmup_steps=5 \
+                    --step_size=3 \
+                    --gamma=0.5 \
+                    --total_steps=10
+```
+
+无 sudo 权限时可将 CMake / gflags 安装到 `$HOME/.local`，再指定 `CMAKE_PREFIX_PATH`：
+
+```bash
+cmake -DCMAKE_PREFIX_PATH=$HOME/.local ..
+```
+
+### 3. Python 模块
+
+```bash
+cd infinitrain
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+训练脚本在**有无 torchrun 两种环境下都能运行**：检测到 `WORLD_SIZE <= 1` 时会自动
+跳过分布式初始化并禁用 DDP，无 GPU 时回落到 CPU 与 gloo 后端。
+
+```bash
+# 单机单进程
+python train.py --lr-scheduler sequential --total-steps 20
+
+# 多卡（由 torchrun 注入 LOCAL_RANK / WORLD_SIZE）
+torchrun --nproc_per_node=8 train.py --lr-scheduler sequential --total-steps 20
+```
+
+---
+
+## 📝 扩展自定义调度器
+
+继承 `LRScheduler` 并实现 `ComputeLR()`（**无参数**，当前步数通过成员的 `step_count_` 获取）：
+
+```cpp
+class MyScheduler : public LRScheduler {
+public:
+    MyScheduler(Optimizer* optimizer, float base_lr, int decay_steps, float decay_rate)
+        : LRScheduler(optimizer),
+          base_lr_(base_lr), decay_steps_(decay_steps), decay_rate_(decay_rate) {
+        last_lr_ = base_lr_;
+        optimizer_->SetLearningRate(last_lr_);
+    }
+
+protected:
+    float ComputeLR() override {
+        int exponent = step_count_ / decay_steps_;
+        return base_lr_ * std::pow(decay_rate_, exponent);
+    }
+
+private:
+    float base_lr_;
+    int decay_steps_;
+    float decay_rate_;
+};
+```
+
+> 注意签名是 `float ComputeLR() override`，**不带参数**。旧版本文档中写作
+> `ComputeLR(int step)`，照抄会导致编译失败（`override` 不匹配）。
+
+### 状态保存与恢复
+
+```cpp
+// 保存
+StateDict state = scheduler->State();
+
+// 恢复
+scheduler->LoadState(state);
+```
+
+---
+
+## 🧪 验证状态
+
+本项目下述结论均在 Python 3.12.7 / PyTorch 2.14.1 / MinGW g++ 下实测通过：
+
+- ✅ 10 个用例的 C++ 与 Python 实现逐步一致
+- ✅ 其中 9 个可与 PyTorch 对齐的用例逐步一致
+- ✅ StepLR 在第 `step_size` 步（而非 `step_size + 1` 步）完成首次衰减
+- ✅ SequentialLR 切换后子调度器从自己的第 1 步重新计数，无重复自增
+- ✅ 状态保存/加载后学习率曲线与未中断时一致（resume 正确性）
+- ✅ 加性 LinearLR 与其等价 LambdaLR 表达式一致
+- ✅ `examples/main.cc` 与 `reference_cpp.cpp` 在 `-Wall -Wextra -Werror` 下零警告编译
+
+### 已知限制
+
+- `train.py` 中的模型是**随机初始化的极小配置**（GPT-2 为 `n_layer=2, n_embd=64, vocab=1000`），
+  用于验证调度器行为，**不是**真实的 LLaMA 3 / GPT-2 预训练模型，也不含任何真实训练逻辑。
+- `ChainedScheduler` 与 PyTorch 语义不同，详见上文。
+- C++ 侧使用 `float` 存储学习率，与 Python 侧的 `double` 存在约 1e-7 的相对误差。
+- C++ 部分**未在 InfiniTrain 完整框架中集成验证**，仅在 demo 模块内编译与运行通过。
+
+---
+
+## 📄 许可证
+
+- 根目录 [LICENSE](LICENSE)：MIT
+- `demo/LICENSE`：MIT，Copyright (c) 2025 InfiniTensor
+
+---
+
+## 🙏 致谢
+
+- 参考题目来源：[InfiniTensor/TinyInfiniTensor](https://github.com/InfiniTensor/TinyInfiniTensor)
+- 训练框架参考：[InfiniTensor/InfiniTrain](https://github.com/InfiniTensor/InfiniTrain)

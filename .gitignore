@@ -35,6 +35,20 @@ CMakeCache.txt
 .idea/
 *.swp
 
+# 测试缓存
+.pytest_cache/
+
+# align.py 自动编译 C++ 参考序列时生成的临时可执行文件
+demo/reference_cpp.exe
+demo/reference_cpp
+
+# pip 安装脚本：误提交过两次（MD5 相同的 2.2MB 副本），不要入库
+get-pip.py
+get-pip.py.*
+
+# 虚拟环境打包备份：此前提交过一个 45 字节的空 tar.gz
+*.tar.gz
+
 # 乱七八糟的日志和临时文件
 *.log
 .DS_Store

@@ -16,8 +16,11 @@ public:
     virtual ~Optimizer() = default;
 };
 
-// 状态字典类型：使用浮点数保存所有状态（整数会隐式转换）
-using StateDict = std::map<std::string, float>;
+// 状态字典类型。
+// 注意：早期版本使用 float 保存所有状态，会把 step_count 也转成浮点，
+// 训练步数超过 2^24（约 1677 万）后无法精确表示，resume 会静默错位。
+// 改用 double 可精确表示到 2^53，足以覆盖任意实际训练步数。
+using StateDict = std::map<std::string, double>;
 
 /**
  * @brief 学习率调度器抽象基类
@@ -60,19 +63,24 @@ public:
     virtual StateDict State() const {
         return {
             {"last_lr", last_lr_},
-            {"step_count", static_cast<float>(step_count_)}
+            {"step_count", static_cast<double>(step_count_)}
         };
     }
 
     /**
      * @brief 从状态字典加载调度器状态
      * @param state 之前保存的状态字典
+     *
+     * 基类与所有派生类统一采用「缺失键保持当前值」的容错策略，
+     * 避免同名 API 出现「基类不抛、派生类抛」的不一致行为。
      */
     virtual void LoadState(const StateDict& state) {
-        auto it = state.find("last_lr");
-        if (it != state.end()) last_lr_ = it->second;
-        it = state.find("step_count");
-        if (it != state.end()) step_count_ = static_cast<int>(it->second);
+        if (auto it = state.find("last_lr"); it != state.end()) {
+            last_lr_ = static_cast<float>(it->second);
+        }
+        if (auto it = state.find("step_count"); it != state.end()) {
+            step_count_ = static_cast<int>(it->second);
+        }
     }
 
 protected:
@@ -81,6 +89,14 @@ protected:
      * @return 当前步应使用的学习率
      */
     virtual float ComputeLR() = 0;
+
+    /// 统一的取值助手：键缺失时不修改 out，返回 false
+    static bool TryGet(const StateDict& state, const std::string& key, double& out) {
+        auto it = state.find(key);
+        if (it == state.end()) return false;
+        out = it->second;
+        return true;
+    }
 
     Optimizer* optimizer_;      // 关联的优化器（派生类可能需要访问）
     float last_lr_;             // 最近一次设置的学习率
@@ -112,8 +128,8 @@ public:
 
     virtual void LoadState(const StateDict& state) override {
         LRScheduler::LoadState(state);
-        auto it = state.find("constant_lr");
-        if (it != state.end()) constant_lr_ = it->second;
+        double v;
+        if (TryGet(state, "constant_lr", v)) constant_lr_ = static_cast<float>(v);
     }
 
 protected:
@@ -142,6 +158,9 @@ public:
     StepLR(Optimizer* optimizer, float initial_lr, int step_size, float gamma)
         : LRScheduler(optimizer), initial_lr_(initial_lr),
           step_size_(step_size), gamma_(gamma) {
+        if (step_size <= 0) {
+            throw std::invalid_argument("StepLR: step_size must be positive");
+        }
         last_lr_ = initial_lr_;
         optimizer_->SetLearningRate(last_lr_);
     }
@@ -149,22 +168,26 @@ public:
     virtual StateDict State() const override {
         auto state = LRScheduler::State();
         state["initial_lr"] = initial_lr_;
-        state["step_size"] = static_cast<float>(step_size_);
+        state["step_size"] = static_cast<double>(step_size_);
         state["gamma"] = gamma_;
         return state;
     }
 
     virtual void LoadState(const StateDict& state) override {
         LRScheduler::LoadState(state);
-        initial_lr_ = state.at("initial_lr");
-        step_size_ = static_cast<int>(state.at("step_size"));
-        gamma_ = state.at("gamma");
+        double v;
+        if (TryGet(state, "initial_lr", v)) initial_lr_ = static_cast<float>(v);
+        if (TryGet(state, "step_size", v)) step_size_ = static_cast<int>(v);
+        if (TryGet(state, "gamma", v)) gamma_ = static_cast<float>(v);
     }
 
 protected:
+    // 对齐 torch.optim.lr_scheduler.StepLR 的闭式口径：
+    //   lr = initial_lr * gamma^(floor(step_count / step_size))
+    // 注意这里是 step_count / step_size 而非 (step_count - 1) / step_size ——
+    // 后者会让每一次衰减都比 PyTorch 晚一步。
     virtual float ComputeLR() override {
-        // 使用 step_count_ 从1开始，公式为 gamma^((step-1)//step_size)
-        int exponent = (step_count_ - 1) / step_size_;
+        int exponent = step_count_ / step_size_;
         return initial_lr_ * std::pow(gamma_, exponent);
     }
 
@@ -190,6 +213,9 @@ public:
     LinearLR(Optimizer* optimizer, float start_lr, float end_lr, int warmup_steps)
         : LRScheduler(optimizer), start_lr_(start_lr), end_lr_(end_lr),
           warmup_steps_(warmup_steps) {
+        if (warmup_steps <= 0) {
+            throw std::invalid_argument("LinearLR: warmup_steps must be positive");
+        }
         last_lr_ = start_lr_;
         optimizer_->SetLearningRate(last_lr_);
     }
@@ -198,15 +224,16 @@ public:
         auto state = LRScheduler::State();
         state["start_lr"] = start_lr_;
         state["end_lr"] = end_lr_;
-        state["warmup_steps"] = static_cast<float>(warmup_steps_);
+        state["warmup_steps"] = static_cast<double>(warmup_steps_);
         return state;
     }
 
     virtual void LoadState(const StateDict& state) override {
         LRScheduler::LoadState(state);
-        start_lr_ = state.at("start_lr");
-        end_lr_ = state.at("end_lr");
-        warmup_steps_ = static_cast<int>(state.at("warmup_steps"));
+        double v;
+        if (TryGet(state, "start_lr", v)) start_lr_ = static_cast<float>(v);
+        if (TryGet(state, "end_lr", v)) end_lr_ = static_cast<float>(v);
+        if (TryGet(state, "warmup_steps", v)) warmup_steps_ = static_cast<int>(v);
     }
 
 protected:
@@ -251,7 +278,8 @@ public:
 
     virtual void LoadState(const StateDict& state) override {
         LRScheduler::LoadState(state);
-        initial_lr_ = state.at("initial_lr");
+        double v;
+        if (TryGet(state, "initial_lr", v)) initial_lr_ = static_cast<float>(v);
         // 注意：lambda_func_ 需在外部重建
     }
 
@@ -286,7 +314,8 @@ public:
                  const std::vector<int>& milestones)
         : LRScheduler(optimizer), schedulers_(schedulers), milestones_(milestones), idx_(0) {
         if (schedulers_.size() != milestones_.size() + 1) {
-            throw std::invalid_argument("SequentialLR: schedulers size must be milestones size + 1");
+            throw std::invalid_argument(
+                "SequentialLR: schedulers size must be milestones size + 1");
         }
         if (!schedulers_.empty()) {
             last_lr_ = schedulers_[0]->GetLR();
@@ -313,7 +342,7 @@ public:
 
     virtual StateDict State() const override {
         StateDict state = LRScheduler::State();
-        state["idx"] = static_cast<float>(idx_);
+        state["idx"] = static_cast<double>(idx_);
         // 保存每个子调度器的状态，用前缀区分
         for (size_t i = 0; i < schedulers_.size(); ++i) {
             auto substate = schedulers_[i]->State();
@@ -326,7 +355,8 @@ public:
 
     virtual void LoadState(const StateDict& state) override {
         LRScheduler::LoadState(state);
-        idx_ = static_cast<int>(state.at("idx"));
+        double v;
+        if (TryGet(state, "idx", v)) idx_ = static_cast<int>(v);
         // 恢复每个子调度器的状态
         for (size_t i = 0; i < schedulers_.size(); ++i) {
             StateDict substate;
@@ -356,7 +386,7 @@ protected:
 private:
     std::vector<LRScheduler*> schedulers_;
     std::vector<int> milestones_;
-    int idx_;  // 当前使用的调度器索引
+    size_t idx_;  // 当前生效的调度器索引
 };
 
 /**

@@ -1,7 +1,15 @@
-torch
-transformers
-numpy
-tqdm
-pyyaml
-requests
-packaging
+# LearningScheduler 依赖清单
+#
+# 对齐基线（demo/align.py 的验证环境）：
+#   Python 3.12.7、PyTorch 2.14.1
+#
+# 关于 PyTorch 版本：本项目的 StepLR / SequentialLR 语义对齐 PyTorch 的闭式实现
+# （_get_closed_form_lr 口径，见 demo/align.py 文档）。虽然该口径自 PyTorch 1.x 即稳定，
+# 但仍建议锁定到已验证的大版本，避免上游语义变更导致数值漂移。
+
+torch>=2.0
+transformers>=4.30
+numpy>=1.24
+
+# 数值对齐验证：pytest align.py
+pytest>=7.0

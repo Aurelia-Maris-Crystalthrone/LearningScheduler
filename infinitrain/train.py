@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
 InfiniTrain 模拟训练脚本（支持 DDP）
-用法：torchrun --nproc_per_node=8 train.py [参数]
+
+用法
+----
+单机单进程（默认，无需分布式启动器）：
+
+    python train.py --lr-scheduler sequential --total-steps 20
+
+多机多卡（需要由 torchrun 注入 LOCAL_RANK / WORLD_SIZE 环境变量）：
+
+    torchrun --nproc_per_node=8 train.py --lr-scheduler sequential --total-steps 20
+
+说明：脚本在检测到 WORLD_SIZE<=1 时会自动跳过分布式初始化并禁用 DDP，
+因此在没有 torchrun 的环境下直接 `python train.py` 也能正常运行。
+无 GPU 时会自动回落到 CPU 与 gloo 后端。
 """
 
 import os
@@ -22,17 +35,37 @@ from lr_scheduler import (
 )
 
 def setup_distributed(rank, world_size):
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
+    """初始化分布式进程组。
+
+    Args:
+        rank: 当前进程编号
+        world_size: 总进程数；<=1 表示单机单进程，不初始化进程组
+
+    Returns:
+        bool: 是否真正进入了分布式模式
+    """
+    if world_size <= 1 or dist.is_initialized():
+        return False
+
+    # 无 GPU 时 nccl 不可用，回落到 gloo
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend, rank=rank, world_size=world_size)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(rank)
+    return True
+
 
 def cleanup():
-    dist.destroy_process_group()
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
+
 
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def get_model(model_name):
     if model_name == 'gpt2':
@@ -117,18 +150,23 @@ def main():
     parser.add_argument('--log-interval', type=int, default=1)
     args = parser.parse_args()
 
-    # 分布式初始化
+    # 分布式初始化。
+    # 注意：WORLD_SIZE 只在 torchrun/分布式启动器下才会设置，
+    # 直接 `python train.py` 时必须能退化为单机单进程，否则会抛 KeyError。
     local_rank = int(os.environ.get('LOCAL_RANK', 0))
-    world_size = int(os.environ['WORLD_SIZE'])
-    setup_distributed(local_rank, world_size)
+    world_size = int(os.environ.get('WORLD_SIZE', 1))
+    is_distributed = setup_distributed(local_rank, world_size)
 
     set_seed(args.seed + local_rank)  # 不同进程不同种子保证输入不同？但为了对齐，可以固定种子
     # 为了 PyTorch 对齐，最好所有进程使用相同数据，因此种子应相同
     set_seed(args.seed)  # 所有进程相同种子
 
-    device = torch.device(f'cuda:{local_rank}')
+    device = torch.device(
+        f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu'
+    )
     model = get_model(args.model).to(device)
-    model = DDP(model, device_ids=[local_rank])
+    if is_distributed:
+        model = DDP(model, device_ids=[local_rank])
 
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = get_scheduler(args.lr_scheduler, optimizer, args)
